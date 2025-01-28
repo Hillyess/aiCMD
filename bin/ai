@@ -1,0 +1,9 @@
+#!/usr/bin/env python3
+from ai_cli_assistant.core.assistant import AICliAssistant
+
+def main():
+    assistant = AICliAssistant()
+    assistant.run()
+
+if __name__ == "__main__":
+    main() 

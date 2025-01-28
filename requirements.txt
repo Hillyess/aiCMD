@@ -1,0 +1,14 @@
+openai>=1.0.0
+prompt_toolkit>=3.0.0
+requests>=2.25.1
+colorama>=0.4.4
+
+
+beautifulsoup4>=4.9.3
+lxml>=4.9.0
+
+
+pywin32>=300; sys_platform == 'win32'
+
+
+pyinstaller>=5.0.0; python_version >= '3.10' 

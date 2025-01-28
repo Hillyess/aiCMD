@@ -4,6 +4,7 @@ import os
 import time
 import threading
 from ..utils.timer import ThinkingTimer
+from ..config.settings import Settings
 
 class ChatManager:
     """AI 对话管理"""
@@ -21,11 +22,17 @@ class ChatManager:
         
     def setup_client(self, api_key=None):
         """设置 OpenAI 客户端"""
-        default_api_key = "sk-be29fe8884b247eaa01665aa2dd21139"
-        api_key = api_key or os.getenv('OPENAI_API_KEY', default_api_key)
+        settings = Settings()
+        
+        # 检查配置
+        if not settings.check_api_config():
+            if not settings.setup_wizard():
+                raise Exception("API 配置失败")
+        
+        # 使用配置的 API 信息
         self.client = openai.Client(
-            api_key=api_key,
-            base_url="https://api.deepseek.com/v1"
+            api_key=settings.get('api.key'),
+            base_url=settings.get('api.base_url')
         )
 
     def get_response(self, query, system_info, context=""):

@@ -37,5 +37,16 @@ env/
 Thumbs.db
 
 # Project specific
-.yunyan_history
-.yunyan/ 
+.aicmd_history
+.aicmd/
+
+# Deployment
+deploy.py
+deploy/
+deploy_config.json
+*.pem
+*.key
+
+# Local development
+local_settings.py
+*.log 

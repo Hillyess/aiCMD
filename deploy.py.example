@@ -1,0 +1,14 @@
+import os
+import sys
+import subprocess
+import argparse
+import tempfile
+import shutil
+import time
+
+# 默认配置 - 使用示例值
+DEFAULT_HOST = "user@example.com"
+DEFAULT_PATH = "/path/to/deployment"
+TIMEOUT = 10
+
+# ... 其余代码保持不变 ... 

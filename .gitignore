@@ -46,6 +46,7 @@ deploy/
 deploy_config.json
 *.pem
 *.key
+deploy.py.example
 
 # Local development
 local_settings.py

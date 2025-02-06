@@ -1,9 +1,9 @@
 from setuptools import setup, find_packages
 
-def read_requirements(filename):
-    """读取依赖文件"""
+def read_file(filename):
+    """读取文件内容"""
     with open(filename, 'r', encoding='utf-8') as f:
-        return [line.strip() for line in f if line.strip() and not line.startswith('#')]
+        return f.read()
 
 setup(
     name="aicmd",
@@ -17,13 +17,13 @@ setup(
     ],
     entry_points={
         'console_scripts': [
-            'ai=run:main',
+            'ai=aicmd.run:main',
         ],
     },
     author="Your Name",
     author_email="your.email@example.com",
     description="An AI-powered command-line assistant",
-    long_description=open("README.md").read(),
+    long_description=read_file("README.md"),
     long_description_content_type="text/markdown",
     url="https://github.com/your-username/aicmd",
     classifiers=[

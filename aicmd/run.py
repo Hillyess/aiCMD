@@ -1,4 +1,4 @@
-from yunyan.core import Assistant
+from .core import Assistant
 import sys
 
 def main():
@@ -13,4 +13,4 @@ def main():
         sys.exit(1)
 
 if __name__ == "__main__":
-    main() 
+    main()

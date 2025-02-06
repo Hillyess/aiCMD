@@ -4,6 +4,7 @@ from pathlib import Path
 from colorama import Fore, Style, init
 import openai
 import time
+import requests
 
 # 初始化 colorama
 init()
@@ -32,18 +33,31 @@ class Settings:
         """验证 API 配置是否可用"""
         try:
             print(f"\n{Fore.YELLOW}正在验证 API 配置...{Style.RESET_ALL}")
-            client = openai.Client(
-                api_key=api_key,
-                base_url=base_url
+            
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            payload = {
+                "model": "deepseek-ai/DeepSeek-V3",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "hi"
+                    }
+                ],
+                "max_tokens": 10
+            }
+            
+            start_time = time.time()
+            response = requests.post(
+                base_url,
+                json=payload,
+                headers=headers
             )
             
-            # 发送一个简单的测试请求
-            start_time = time.time()
-            response = client.chat.completions.create(
-                model="deepseek-chat",
-                messages=[{"role": "user", "content": "hi"}],
-                max_tokens=10
-            )
+            response.raise_for_status()
             latency = time.time() - start_time
             
             print(f"{Fore.GREEN}✓ API 连接成功！延迟: {latency:.2f}秒{Style.RESET_ALL}")
@@ -64,43 +78,21 @@ class Settings:
         print(f"\n{Fore.GREEN}=== aiCMD 首次运行配置向导 ==={Style.RESET_ALL}")
         print("请配置 AI API 信息：")
         
-        while True:
-            # 先获取 Base URL
-            default_url = "https://api.deepseek.com/v1"
-            base_url = input(f"{Fore.CYAN}请输入 API Base URL\n默认值 [{default_url}]: {Style.RESET_ALL}").strip()
-            
-            # 如果输入为空，使用默认值
-            if not base_url:
-                base_url = default_url
-                print(f"{Fore.GREEN}使用默认 URL: {default_url}{Style.RESET_ALL}")
-            elif not base_url.startswith('http'):
-                print(f"{Fore.RED}请输入有效的 URL！必须以 http:// 或 https:// 开头{Style.RESET_ALL}")
-                continue
-            
-            # 然后获取 API Key
-            print(f"\n{Fore.YELLOW}提示：API Key 通常以 'sk-' 开头{Style.RESET_ALL}")
-            while True:
-                api_key = input(f"{Fore.CYAN}请输入你的 API Key: {Style.RESET_ALL}").strip()
-                if api_key.startswith('sk-'):
-                    break
-                print(f"{Fore.RED}API Key 格式不正确！应该以 'sk-' 开头{Style.RESET_ALL}")
-            
-            # 验证 API 配置
-            if self.validate_api(api_key, base_url):
-                # 验证成功后保存配置
-                self.set('api.base_url', base_url)
-                self.set('api.key', api_key)
-                print(f"\n{Fore.GREEN}配置已保存！{Style.RESET_ALL}")
-                print(f"配置文件位置：{self.config_file}")
-                return True
-            
-            # 验证失败，询问是否重试
-            retry = input(f"\n{Fore.YELLOW}是否重新配置？(y/n): {Style.RESET_ALL}").strip().lower()
-            if retry != 'y':
-                print(f"\n{Fore.RED}配置未保存。程序退出。{Style.RESET_ALL}")
-                return False
-            print("\n" + "="*50 + "\n")
-    
+        # 设置默认值
+        default_url = "https://api.siliconflow.cn/v1/chat/completions"
+        default_key = "sk-nayyjjucvglfvvgehztuqbxicvruerbjqrzswhfpsecpghaj"
+        
+        # 保存配置
+        self.set('api.base_url', default_url)
+        self.set('api.key', default_key)
+        
+        print(f"{Fore.GREEN}使用默认配置：{Style.RESET_ALL}")
+        print(f"URL: {default_url}")
+        print(f"API Key: {default_key}")
+        print(f"\n{Fore.GREEN}配置已保存！{Style.RESET_ALL}")
+        print(f"配置文件位置：{self.config_file}")
+        return True
+
     def load_config(self):
         """加载配置"""
         try:

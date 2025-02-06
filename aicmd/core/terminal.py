@@ -10,14 +10,16 @@ from ..utils.emoji import EmojiSupport
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.styles import Style as PromptStyle
 import glob
+import time
 
 # 初始化 colorama
 init()
 
 class SimpleCompleter(Completer):
     """简单的补全器实现"""
-    def __init__(self):
+    def __init__(self, session):
         self.commands = self._get_commands()
+        self.session = session  # 保存 session 引用
     
     def _get_commands(self):
         """获取系统命令"""
@@ -39,6 +41,19 @@ class SimpleCompleter(Completer):
         word = document.get_word_before_cursor()
         text_before_cursor = document.text_before_cursor
         
+        # 先检查是否是历史命令补全
+        if word and not text_before_cursor.startswith(('cd ', 'ls ')):
+            # 从会话历史记录中查找匹配的命令
+            history = self.session.history.get_strings()
+            for cmd in reversed(history):  # 倒序遍历，最新的命令优先
+                if cmd.startswith(word):
+                    yield Completion(
+                        cmd,
+                        start_position=-len(word),
+                        display_meta='history'
+                    )
+        
+        # 然后是路径补全
         if text_before_cursor.startswith('cd ') or text_before_cursor.startswith('ls '):
             # 路径补全
             cmd_parts = text_before_cursor.split(maxsplit=1)
@@ -131,7 +146,7 @@ class SimpleCompleter(Completer):
                 if cmd.startswith(word):
                     yield Completion(
                         cmd,
-                        start_position=-len(word) if word else 0
+                        start_position=-len(word)
                     )
 
 class Terminal:
@@ -152,27 +167,23 @@ class Terminal:
             history_file = os.path.expanduser('~/.aicmd_history')
             
             # 创建补全器
-            self.completer = SimpleCompleter()
-            
-            # 创建按键绑定
-            self.bindings = self._create_key_bindings()
-            
-            # 创建样式
-            self.style = self._create_style()
-            
-            # 创建会话
             self.session = PromptSession(
                 history=FileHistory(history_file),
-                completer=self.completer,
                 auto_suggest=AutoSuggestFromHistory(),
-                key_bindings=self.bindings,
-                style=self.style,
+                key_bindings=self._create_key_bindings(),
+                style=self._create_style(),
                 complete_in_thread=True,
-                complete_while_typing=False,  # 只在按 Tab 时补全
+                complete_while_typing=False,
                 enable_history_search=True,
                 mouse_support=True,
-                refresh_interval=0.5,  # 提高响应速度
+                refresh_interval=0.5,
             )
+            
+            # 创建补全器并传入 session
+            self.completer = SimpleCompleter(self.session)
+            
+            # 设置补全器
+            self.session.completer = self.completer
             
             # 添加历史记录跟踪
             self.command_history = []
@@ -186,15 +197,31 @@ class Terminal:
         """创建按键绑定"""
         bindings = KeyBindings()
         
+        # 添加双击 Ctrl+C 检测
+        self.last_ctrl_c_time = 0
+        
         @bindings.add('c-c')
         def _(event):
             """处理 Ctrl+C"""
-            event.app.exit()
+            current_time = time.time()
+            if current_time - self.last_ctrl_c_time < 0.5:  # 0.5秒内双击
+                print(f"\n{self.emoji.get('👋')} 再见！")
+                event.app.exit()
+                # 强制退出程序
+                import sys
+                sys.exit(0)
+            else:
+                self.last_ctrl_c_time = current_time
+                print('^C')
             
         @bindings.add('c-d')
         def _(event):
             """处理 Ctrl+D"""
+            print(f"\n{self.emoji.get('👋')} 再见！")
             event.app.exit()
+            # 强制退出程序
+            import sys
+            sys.exit(0)
             
         @bindings.add('c-w')
         def _(event):

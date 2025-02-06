@@ -10,6 +10,7 @@ from prompt_toolkit.history import FileHistory
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 from colorama import init, Fore, Style
 from ..utils.emoji import EmojiSupport
+import time
 
 # 初始化 colorama 以支持 Windows 彩色输出
 init()
@@ -22,29 +23,26 @@ class WindowsTerminal:
         self.thinking_time = None
         
         # 设置历史文件
-        history_file = os.path.expanduser('~/.yunyan_history')
-        
-        # 创建补全器
-        self.completer = self._create_completer()
-        
-        # 创建按键绑定
-        self.bindings = self._create_key_bindings()
-        
-        # 创建样式
-        self.style = self._create_style()
+        history_file = os.path.expanduser('~/.aicmd_history')
         
         # 创建会话
         self.session = PromptSession(
             history=FileHistory(history_file),
-            completer=self.completer,
             auto_suggest=AutoSuggestFromHistory(),
-            key_bindings=self.bindings,
-            style=self.style,
-            complete_while_typing=False,
+            key_bindings=self._create_key_bindings(),
+            style=self._create_style(),
             complete_in_thread=True,
+            complete_while_typing=False,
             enable_history_search=True,
-            mouse_support=True
+            mouse_support=True,
+            refresh_interval=0.5,
         )
+        
+        # 创建补全器并传入 session
+        self.completer = self._create_completer()
+        
+        # 设置补全器
+        self.session.completer = self.completer
         
         # 添加历史记录跟踪
         self.command_history = []
@@ -54,10 +52,26 @@ class WindowsTerminal:
     def _create_completer(self):
         """创建 Windows 补全器"""
         class WindowsCompleter(Completer):
+            def __init__(self, session):
+                self.session = session  # 保存 session 引用
+                
             def get_completions(self, document, complete_event):
                 word = document.get_word_before_cursor()
                 text_before_cursor = document.text_before_cursor
                 
+                # 先检查是否是历史命令补全
+                if word and not text_before_cursor.startswith(('cd ', 'dir ')):
+                    # 从会话历史记录中查找匹配的命令
+                    history = self.session.history.get_strings()
+                    for cmd in reversed(history):  # 倒序遍历，最新的命令优先
+                        if cmd.startswith(word):
+                            yield Completion(
+                                cmd,
+                                start_position=-len(word),
+                                display_meta='history'
+                            )
+                
+                # 然后是路径补全
                 if text_before_cursor.startswith('cd ') or text_before_cursor.startswith('dir '):
                     # 路径补全
                     cmd_parts = text_before_cursor.split(maxsplit=1)
@@ -124,7 +138,8 @@ class WindowsTerminal:
                         if cmd.startswith(word.lower()):
                             yield Completion(cmd, start_position=-len(word))
         
-        return WindowsCompleter()
+        # 创建补全器实例时传入 session
+        return WindowsCompleter(self.session)
 
     def _create_style(self):
         """创建 Windows 样式"""
@@ -139,13 +154,31 @@ class WindowsTerminal:
         """创建按键绑定"""
         bindings = KeyBindings()
         
+        # 添加双击 Ctrl+C 检测
+        self.last_ctrl_c_time = 0
+        
         @bindings.add('c-c')
         def _(event):
-            event.app.exit()
+            """处理 Ctrl+C"""
+            current_time = time.time()
+            if current_time - self.last_ctrl_c_time < 0.5:  # 0.5秒内双击
+                print(f"\n{self.emoji.get('👋')} 再见！")
+                event.app.exit()
+                # 强制退出程序
+                import sys
+                sys.exit(0)
+            else:
+                self.last_ctrl_c_time = current_time
+                print('^C')
             
         @bindings.add('c-d')
         def _(event):
+            """处理 Ctrl+D"""
+            print(f"\n{self.emoji.get('👋')} 再见！")
             event.app.exit()
+            # 强制退出程序
+            import sys
+            sys.exit(0)
             
         @bindings.add('tab')
         def _(event):
@@ -331,3 +364,11 @@ class WindowsTerminal:
     def set_thinking_time(self, time):
         """设置思考时间"""
         self.thinking_time = time 
+
+    def add_to_history(self, command):
+        """添加命令到历史记录"""
+        if command and hasattr(self, 'session') and hasattr(self.session, 'history'):
+            try:
+                self.session.history.append_string(command)
+            except Exception:
+                pass  # 忽略添加历史记录失败的情况 

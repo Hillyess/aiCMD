@@ -90,8 +90,12 @@ class Assistant:
                 if command:
                     print(f"\nAI 建议的命令：{command}")
                     print("提示：你可以直接复制此命令或使用上箭头键获取此命令")
-                    # 添加到终端历史记录
-                    self.terminal.add_to_history(command)
+                    # 尝试添加到终端历史记录
+                    try:
+                        if hasattr(self.terminal, 'add_to_history'):
+                            self.terminal.add_to_history(command)
+                    except Exception:
+                        pass  # 忽略添加历史记录失败的情况
         except Exception as e:
             print(f"AI 查询失败: {str(e)}")
 

@@ -76,19 +76,16 @@ class Settings:
     def setup_wizard(self):
         """首次运行配置向导"""
         print(f"\n{Fore.GREEN}=== aiCMD 首次运行配置向导 ==={Style.RESET_ALL}")
-        print("请配置 AI API 信息：")
         
-        # 设置默认值
-        default_url = "https://api.siliconflow.cn/v1/chat/completions"
-        default_key = "sk-nayyjjucvglfvvgehztuqbxicvruerbjqrzswhfpsecpghaj"
+        # 设置默认值为本地 Ollama
+        default_url = "http://localhost:11434/api/generate"
         
         # 保存配置
         self.set('api.base_url', default_url)
-        self.set('api.key', default_key)
+        self.set('api.key', '')  # Ollama 不需要 API Key
         
-        print(f"{Fore.GREEN}使用默认配置：{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}使用本地 Ollama 配置：{Style.RESET_ALL}")
         print(f"URL: {default_url}")
-        print(f"API Key: {default_key}")
         print(f"\n{Fore.GREEN}配置已保存！{Style.RESET_ALL}")
         print(f"配置文件位置：{self.config_file}")
         return True

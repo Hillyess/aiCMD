@@ -3,7 +3,7 @@ import sys
 import subprocess
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import Completer, Completion
-from prompt_toolkit.formatted_text import FormattedText
+from prompt_toolkit.formatted_text import FormattedText, HTML
 from prompt_toolkit.styles import Style as PromptStyle
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.history import FileHistory
@@ -11,16 +11,19 @@ from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 from colorama import init, Fore, Style
 from ..utils.emoji import EmojiSupport
 import time
+from .base import BaseTerminal  # 从 base.py 导入基类
+import platform
 
 # 初始化 colorama 以支持 Windows 彩色输出
 init()
 
-class WindowsTerminal:
+class WindowsTerminal(BaseTerminal):
     """Windows 专用终端实现"""
-    def __init__(self, callback=None):
+    def __init__(self, callback=None, agent_mode=False):
+        super().__init__(callback, agent_mode)
         self.emoji = EmojiSupport()
-        self.callback = callback
         self.thinking_time = None
+        self.agent_mode = agent_mode  # 确保 agent_mode 被设置
         
         # 设置历史文件
         history_file = os.path.expanduser('~/.aicmd_history')
@@ -54,6 +57,7 @@ class WindowsTerminal:
         class WindowsCompleter(Completer):
             def __init__(self, session):
                 self.session = session  # 保存 session 引用
+                self.completion_cache = set()  # 添加缓存集合
                 
             def get_completions(self, document, complete_event):
                 word = document.get_word_before_cursor()
@@ -64,7 +68,8 @@ class WindowsTerminal:
                     # 从会话历史记录中查找匹配的命令
                     history = self.session.history.get_strings()
                     for cmd in reversed(history):  # 倒序遍历，最新的命令优先
-                        if cmd.startswith(word):
+                        if cmd.startswith(word) and cmd not in self.completion_cache:
+                            self.completion_cache.add(cmd)  # 添加到缓存
                             yield Completion(
                                 cmd,
                                 start_position=-len(word),
@@ -142,12 +147,12 @@ class WindowsTerminal:
         return WindowsCompleter(self.session)
 
     def _create_style(self):
-        """创建 Windows 样式"""
+        """创建提示符样式"""
         return PromptStyle.from_dict({
-            'username': 'ansigreen bold',
-            'hostname': 'ansigreen bold',
-            'path': 'ansiblue bold',
+            'ansiyellow': 'ansibrightyellow bold',
+            'ansiblue': 'ansibrightblue bold',
             'prompt': 'ansiwhite',
+            'ai': 'ansibrightmagenta bold'
         })
 
     def _create_key_bindings(self):
@@ -218,46 +223,89 @@ class WindowsTerminal:
     def _capture_output(self, command):
         """捕获 Windows 命令输出"""
         try:
-            result = subprocess.run(
-                f'cmd /c {command}',
-                capture_output=True,
-                text=True,
-                encoding='gbk',  # 使用 GBK 编码
-                errors='replace'
+            # 使用 PowerShell 执行命令，关闭 PowerShell 的进度显示
+            powershell_command = (
+                'powershell.exe -NoProfile -NonInteractive -Command "'
+                '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; '  # 设置输出编码
+                '$ProgressPreference = \'SilentlyContinue\'; '  # 关闭进度显示，使用引号
+                f'& {{ {command} }}"'  # 使用 ScriptBlock 执行命令
             )
-            return result.stdout + result.stderr
+            
+            # 创建环境变量副本并设置编码
+            env = os.environ.copy()
+            env['PYTHONIOENCODING'] = 'utf-8'
+            
+            process = subprocess.Popen(
+                powershell_command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                shell=True,
+                encoding='gbk',  # Windows 默认使用 GBK
+                errors='replace',
+                bufsize=1,
+                universal_newlines=True,
+                env=env
+            )
+            
+            output = []
+            while True:
+                stdout_line = process.stdout.readline()
+                if stdout_line:
+                    # 处理编码
+                    try:
+                        print(stdout_line, end='', flush=True)
+                        output.append(stdout_line)
+                    except UnicodeEncodeError:
+                        # 如果 GBK 失败，尝试 UTF-8
+                        print(stdout_line.encode('utf-8', errors='replace').decode('utf-8', errors='replace'), end='', flush=True)
+                        output.append(stdout_line)
+                
+                stderr_line = process.stderr.readline()
+                if stderr_line:
+                    output.append(stderr_line)
+                
+                if process.poll() is not None:
+                    for line in process.stdout.readlines():
+                        try:
+                            print(line, end='', flush=True)
+                            output.append(line)
+                        except UnicodeEncodeError:
+                            print(line.encode('utf-8', errors='replace').decode('utf-8', errors='replace'), end='', flush=True)
+                            output.append(line)
+                    for line in process.stderr.readlines():
+                        output.append(line)
+                    break
+            
+            process.wait()
+            return ''.join(output)
+            
         except Exception as e:
-            return str(e)
+            error_msg = str(e)
+            print(error_msg, file=sys.stderr)
+            return error_msg
 
     def get_prompt(self):
-        """生成 Windows 风格提示符"""
+        """获取命令提示符"""
+        # 根据模式选择不同的机器人表情
+        if self.agent_mode:
+            robot = '️️A'  # Agent模式
+        else:
+            robot = 'Q'  # 问答模式
+            
         # 获取基本信息
-        conda_env = os.environ.get('CONDA_DEFAULT_ENV', '')
-        username = os.environ.get('USERNAME', '')
-        hostname = os.environ.get('COMPUTERNAME', '')
-        cwd = os.getcwd().replace('/', '\\')
+        username = os.getlogin()
+        hostname = platform.node()
+        cwd = os.getcwd()
         
-        # 构建提示符
-        prompt = []
-        
-        if self.thinking_time is not None:
-            prompt.append(('class:default', f"({self.thinking_time:.1f}s) "))
-        
-        prompt.append(('class:default', f"{self.emoji.get('🤖')} "))
-        
-        if conda_env:
-            prompt.append(('class:default', f"({conda_env}) "))
-        
-        prompt.extend([
-            ('class:username', username),
-            ('class:default', '@'),
-            ('class:hostname', hostname),
-            ('class:default', ':'),
-            ('class:path', cwd),
-            ('class:prompt', '$ ')
+        # 使用 FormattedText 构建提示符
+        return FormattedText([
+            ('', f'{self.emoji.get(robot)} '),  # 机器人表情
+            ('', '(ai) '),  # 固定标识
+            ('class:ansiyellow', f'{username}@{hostname}'),  # 用户名和主机名（黄色）
+            ('', ':'),
+            ('class:ansiblue', cwd),  # 当前目录（蓝色）
+            ('class:prompt', ' $ ')  # 提示符
         ])
-        
-        return FormattedText(prompt)
 
     def _build_context(self):
         """构建上下文信息"""
@@ -291,7 +339,7 @@ class WindowsTerminal:
             while True:
                 try:
                     command = self.session.prompt(
-                        self.get_prompt(),
+                        self.get_prompt(),  # 使用 self.get_prompt()
                         enable_suspend=True,
                         enable_open_in_editor=True,
                         complete_while_typing=False,
@@ -317,29 +365,20 @@ class WindowsTerminal:
                         query = command[1:] if command.startswith('/') else command
                         if self.callback:
                             context = self._build_context()
-                            full_query = f"""
-上下文信息：
-{context}
-
-用户问题：
-{query}
-"""
-                            response = self.callback(full_query)
-                            self.chat_history.append((query, response))
+                            response = self.callback(query)
+                            
+                            # 如果是 Agent 模式，等待用户执行命令后再继续
+                            if hasattr(self, 'agent_mode') and self.agent_mode:
+                                continue  # 直接返回到命令行，让用户执行命令
                     else:
-                        if command.startswith('cd '):
-                            path = command[3:].strip()
-                            try:
-                                os.chdir(os.path.expanduser(path))
-                                self.output_history.append("")
-                            except Exception as e:
-                                error = f"错误: {str(e)}"
-                                print(f"{Fore.RED}{error}{Style.RESET_ALL}")
-                                self.output_history.append(error)
-                        else:
-                            output = self._capture_output(command)
-                            self.output_history.append(output)
-                            print(output, end='')
+                        # 执行命令并记录输出
+                        output = self._capture_output(command)
+                        self.output_history.append(output)
+                        print(output, end='')
+                        
+                        # 如果是 Agent 模式，将结果发送给 AI 分析
+                        if hasattr(self, 'agent_mode') and self.agent_mode and self.callback:
+                            self.callback(f"命令 '{command}' 已执行，输出为：\n{output}\n请分析结果并告诉我下一步该怎么做。")
                             
                 except KeyboardInterrupt:
                     print('^C')
@@ -354,11 +393,17 @@ class WindowsTerminal:
 
     def show_welcome(self):
         """显示欢迎信息"""
-        print("\n=== 云衍 (YunYan) 智能运维助手 ===")
-        print(f"{self.emoji.get('👋')} 欢迎使用云衍！")
-        print(f"{self.emoji.get('💡')} 输入 / 开头的内容可以询问 AI")
-        print(f"{self.emoji.get('💻')} 输入 'exit' 退出程序")
-        print("示例：/如何查看系统状态")
+        # 使用 colorama 的 ANSI 颜色代码
+        print(f"\n=== \033[96maiCMD智能运维助手\033[0m ===")
+        print(f"{self.emoji.get('👋')} 欢迎使用aiCMD！")
+        if self.agent_mode:
+            print(f"{self.emoji.get('🤖')} \033[92m已进入 Agent 模式\033[0m")
+            print(f"{self.emoji.get('💡')} 直接描述你想完成的任务即可")
+            print(f"示例：\033[96m安装并配置 Nginx 服务器\033[0m")
+        else:
+            print(f"{self.emoji.get('💡')} 输入 / 开头的内容可以询问 AI")
+            print(f"{self.emoji.get('💻')} 输入 'exit' 退出程序")
+            print(f"示例：\033[96m/如何查看系统状态\033[0m")
         print("=====================\n")
 
     def set_thinking_time(self, time):

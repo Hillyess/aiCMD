@@ -11,6 +11,8 @@ from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.styles import Style as PromptStyle
 import glob
 import time
+import platform
+from .base import BaseTerminal  # 从 base.py 导入基类
 
 # 初始化 colorama
 init()
@@ -20,6 +22,7 @@ class SimpleCompleter(Completer):
     def __init__(self, session):
         self.commands = self._get_commands()
         self.session = session  # 保存 session 引用
+        self.completion_cache = set()  # 添加缓存集合
     
     def _get_commands(self):
         """获取系统命令"""
@@ -46,7 +49,8 @@ class SimpleCompleter(Completer):
             # 从会话历史记录中查找匹配的命令
             history = self.session.history.get_strings()
             for cmd in reversed(history):  # 倒序遍历，最新的命令优先
-                if cmd.startswith(word):
+                if cmd.startswith(word) and cmd not in self.completion_cache:
+                    self.completion_cache.add(cmd)  # 添加到缓存
                     yield Completion(
                         cmd,
                         start_position=-len(word),
@@ -149,49 +153,43 @@ class SimpleCompleter(Completer):
                         start_position=-len(word)
                     )
 
-class Terminal:
-    """基于 prompt_toolkit 的终端实现"""
-    def __init__(self, callback=None):
-        # 根据平台选择终端实现
-        if os.name == 'nt':
-            from .win_terminal import WindowsTerminal
-            self.__class__ = WindowsTerminal
-            WindowsTerminal.__init__(self, callback)
-        else:
-            # 原有的 Unix 终端实现
-            self.emoji = EmojiSupport()
-            self.callback = callback
-            self.thinking_time = None
-            
-            # 设置历史文件
-            history_file = os.path.expanduser('~/.aicmd_history')
-            
-            # 创建补全器
-            self.session = PromptSession(
-                history=FileHistory(history_file),
-                auto_suggest=AutoSuggestFromHistory(),
-                key_bindings=self._create_key_bindings(),
-                style=self._create_style(),
-                complete_in_thread=True,
-                complete_while_typing=False,
-                enable_history_search=True,
-                mouse_support=True,
-                refresh_interval=0.5,
-            )
-            
-            # 创建补全器并传入 session
-            self.completer = SimpleCompleter(self.session)
-            
-            # 设置补全器
-            self.session.completer = self.completer
-            
-            # 添加历史记录跟踪
-            self.command_history = []
-            self.output_history = []
-            self.chat_history = []
-            
-            # 创建输出捕获管道
-            self.output_pipe = os.pipe() if hasattr(os, 'pipe') else None
+class UnixTerminal(BaseTerminal):
+    """Unix 终端实现"""
+    def __init__(self, callback=None, agent_mode=False):
+        super().__init__(callback, agent_mode)
+        self.emoji = EmojiSupport()
+        self.thinking_time = None
+        self.agent_mode = agent_mode  # 确保 agent_mode 被设置
+        
+        # 设置历史文件
+        history_file = os.path.expanduser('~/.aicmd_history')
+        
+        # 创建会话
+        self.session = PromptSession(
+            history=FileHistory(history_file),
+            auto_suggest=AutoSuggestFromHistory(),
+            key_bindings=self._create_key_bindings(),
+            style=self._create_style(),
+            complete_in_thread=True,
+            complete_while_typing=False,
+            enable_history_search=True,
+            mouse_support=True,
+            refresh_interval=0.5,
+        )
+        
+        # 创建补全器并传入 session
+        self.completer = SimpleCompleter(self.session)
+        
+        # 设置补全器
+        self.session.completer = self.completer
+        
+        # 创建输出捕获管道
+        self.output_pipe = os.pipe() if hasattr(os, 'pipe') else None
+        
+        # 添加历史记录跟踪
+        self.command_history = []
+        self.output_history = []
+        self.chat_history = []
 
     def _create_key_bindings(self):
         """创建按键绑定"""
@@ -207,8 +205,6 @@ class Terminal:
             if current_time - self.last_ctrl_c_time < 0.5:  # 0.5秒内双击
                 print(f"\n{self.emoji.get('👋')} 再见！")
                 event.app.exit()
-                # 强制退出程序
-                import sys
                 sys.exit(0)
             else:
                 self.last_ctrl_c_time = current_time
@@ -219,8 +215,6 @@ class Terminal:
             """处理 Ctrl+D"""
             print(f"\n{self.emoji.get('👋')} 再见！")
             event.app.exit()
-            # 强制退出程序
-            import sys
             sys.exit(0)
             
         @bindings.add('c-w')
@@ -311,51 +305,34 @@ class Terminal:
     def _create_style(self):
         """创建提示符样式"""
         return PromptStyle.from_dict({
-            # 使用 ANSI 颜色代码
-            'username': 'ansigreen bold',
-            'hostname': 'ansigreen bold',
-            'path': 'ansiblue bold',
+            'ansiyellow': 'ansibrightyellow bold',
+            'ansiblue': 'ansibrightblue bold',
             'prompt': 'ansiwhite',
-            # 或者使用 RGB 颜色代码
-            # 'username': '#afd700 bold',  # 绿色
-            # 'hostname': '#afd700 bold',  # 绿色
-            # 'path': '#5f87ff bold',      # 蓝色
-            # 'prompt': '#ffffff',          # 白色
+            'ai': 'ansibrightmagenta bold'
         })
 
     def get_prompt(self):
-        """生成提示符"""
+        """获取命令提示符"""
+        # 根据模式选择不同的机器人表情
+        if hasattr(self, 'agent_mode') and self.agent_mode:
+            robot = self.emoji.get('️A')  # Agent模式
+        else:
+            robot = self.emoji.get('Q')  # 问答模式
+            
         # 获取基本信息
-        conda_env = os.environ.get('CONDA_DEFAULT_ENV', '')
-        username = os.environ.get('USER', '')
-        hostname = os.uname().nodename if hasattr(os, 'uname') else ''
-        cwd = self._get_shortened_path(os.getcwd())
+        username = os.getlogin()
+        hostname = platform.node()
+        cwd = os.getcwd()
         
-        # 构建提示符
-        prompt = []
-        
-        # 添加思考时间
-        if self.thinking_time is not None:
-            prompt.append(('class:default', f"({self.thinking_time:.1f}s) "))
-        
-        # 添加 AI 图标
-        prompt.append(('class:default', f"{self.emoji.get('🤖')} "))
-        
-        # 添加 conda 环境
-        if conda_env:
-            prompt.append(('class:default', f"({conda_env}) "))
-        
-        # 添加用户名和主机名
-        prompt.extend([
-            ('class:username', username),
-            ('class:default', '@'),
-            ('class:hostname', hostname),
-            ('class:default', ':'),
-            ('class:path', cwd),
-            ('class:prompt', '$ ')
+        # 使用 FormattedText 构建提示符
+        return FormattedText([
+            ('', f'{robot} '),  # 机器人表情
+            ('', '(ai) '),  # 固定标识
+            ('class:ansiyellow', f'{username}@{hostname}'),  # 用户名和主机名（黄色）
+            ('', ':'),
+            ('class:ansiblue', cwd),  # 当前目录（蓝色）
+            ('class:prompt', ' $ ')  # 提示符
         ])
-        
-        return FormattedText(prompt)
 
     def _capture_output(self, command):
         """捕获命令输出"""
@@ -455,35 +432,21 @@ class Terminal:
                         # AI 问答模式
                         query = command[1:] if command.startswith('/') else command
                         if self.callback:
-                            # 构建上下文
                             context = self._build_context()
-                            # 将上下文作为查询的一部分
-                            full_query = f"""
-上下文信息：
-{context}
-
-用户问题：
-{query}
-"""
-                            # 只传递组合后的查询
-                            response = self.callback(full_query)
-                            # 记录对话
-                            self.chat_history.append((query, response))
+                            response = self.callback(query)
+                            
+                            # 如果是 Agent 模式，等待用户执行命令后再继续
+                            if hasattr(self, 'agent_mode') and self.agent_mode:
+                                continue  # 直接返回到命令行，让用户执行命令
                     else:
-                        if command.startswith('cd '):
-                            path = command[3:].strip()
-                            try:
-                                os.chdir(os.path.expanduser(path))
-                                self.output_history.append("")  # cd 命令没有输出
-                            except Exception as e:
-                                error = f"错误: {str(e)}"
-                                print(f"{Fore.RED}{error}{Style.RESET_ALL}")
-                                self.output_history.append(error)
-                        else:
-                            # 执行命令并捕获输出
-                            output = self._capture_output(command)
-                            self.output_history.append(output)
-                            print(output, end='')
+                        # 执行命令并记录输出
+                        output = self._capture_output(command)
+                        self.output_history.append(output)
+                        print(output, end='')
+                        
+                        # 如果是 Agent 模式，将结果发送给 AI 分析
+                        if hasattr(self, 'agent_mode') and self.agent_mode and self.callback:
+                            self.callback(f"命令 '{command}' 已执行，输出为：\n{output}\n请分析结果并告诉我下一步该怎么做。")
                             
                 except KeyboardInterrupt:
                     print('^C')
@@ -505,11 +468,16 @@ class Terminal:
 
     def show_welcome(self):
         """显示欢迎信息"""
-        print("\n=== aiCMD - AI-Powered Command-Line Assistant ===")
-        print(f"{self.emoji.get('👋')} Welcome to aiCMD!")
-        print(f"{self.emoji.get('💡')} Type / to start AI conversation")
-        print(f"{self.emoji.get('💻')} Type 'exit' to quit")
-        print("Example: /how to check system status")
+        print(f"\n=== {Fore.CYAN}aiCMD智能运维助手{Style.RESET_ALL} ===")
+        print(f"{self.emoji.get('👋')} 欢迎使用aiCMD！")
+        if self.agent_mode:
+            print(f"{self.emoji.get('🤖')} {Fore.GREEN}已进入 Agent 模式{Style.RESET_ALL}")
+            print(f"{self.emoji.get('💡')} 直接描述你想完成的任务即可")
+            print(f"示例：{Fore.CYAN}安装并配置 Nginx 服务器{Style.RESET_ALL}")
+        else:
+            print(f"{self.emoji.get('💡')} 输入 / 开头的内容可以询问 AI")
+            print(f"{self.emoji.get('💻')} 输入 'exit' 退出程序")
+            print(f"示例：{Fore.CYAN}/如何查看系统状态{Style.RESET_ALL}")
         print("=====================\n")
 
     def set_thinking_time(self, time):
@@ -520,3 +488,18 @@ class Terminal:
         """添加命令到历史记录"""
         if command:
             self.session.history.append_string(command) 
+
+class Terminal(BaseTerminal):
+    """终端工厂类"""
+    def __new__(cls, callback=None, agent_mode=False):
+        if os.name == 'nt':
+            from .win_terminal import WindowsTerminal
+            return WindowsTerminal(callback, agent_mode)
+        else:
+            return UnixTerminal(callback, agent_mode)
+
+    def __init__(self, callback=None, agent_mode=False):
+        """初始化终端"""
+        super().__init__(callback, agent_mode)
+        self.callback = callback
+        self.agent_mode = agent_mode 
